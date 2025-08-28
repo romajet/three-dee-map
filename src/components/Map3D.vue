@@ -11,7 +11,7 @@ const canvasRef = ref(null)
 const currentFloor = ref(null)
 const isLoading = ref(true)
 
-let scene, camera, renderer, controls
+let scene, camera, renderer, labelRenderer, controls
 let objects = []
 
 let currentFloorGroup = null
@@ -213,10 +213,10 @@ function createFloorFromPolygon(coords, thickness, color, offset = [0, 0, 0, 1],
 function createRoomFromWalls(roomData, wallHeight, wallThickness, floorThickness, wallColor, floorColor, offset = [0, 0, 0, 1], zShift = 0) {
     const roomGroup = new THREE.Group()
 
-    const floor = createFloorFromPolygon(roomData.points, floorThickness, floorColor, offset, zShift)
+    const floor = createFloorFromPolygon(roomData.points, floorThickness - 0.5, floorColor, offset, zShift + floorThickness - 4.3)
     roomGroup.add(floor)
 
-    const walls = createWallsFromPolygon(roomData.points, wallHeight, wallThickness, wallColor, offset, zShift + floorThickness)
+    const walls = createWallsFromPolygon(roomData.points, wallHeight, wallThickness, wallColor, offset, zShift)
     roomGroup.add(walls)
 
     roomGroup.userData = roomData
@@ -241,7 +241,7 @@ async function createDetailedFloor(buildingId, floor, offset) {
             1,
             0x888888,
             offset,
-            floor * 8 - 7
+            (floor - 1) * 8 + 1
         )
         floorGroup.add(floorMesh)
 
@@ -251,7 +251,7 @@ async function createDetailedFloor(buildingId, floor, offset) {
             consts.floor_walls,
             0xcccccc,
             offset,
-            (floor - 1) * 8 + 1.5
+            (floor - 1) * 8
         )
         floorGroup.add(walls)
     }
@@ -265,15 +265,18 @@ async function createDetailedFloor(buildingId, floor, offset) {
                 room,
                 8,
                 consts.room_walls,
-                0.5,
-                0xffcc00,
-                0xffeeaa,
+                // 0.5,
+                8,
+                0xcccccc,
+                0xf6e3b8,
                 offset,
                 (floor - 1) * 8 + 1.5
             )
             floorGroup.add(roomMesh)
         }
     }
+
+    // const infObjects = await fetchInfrastructureObjects
 
     floorGroup.userData = { buildingId, floor, type: 'detailedFloor' }
     return floorGroup
@@ -326,7 +329,7 @@ onMounted(async () => {
         labelContainer.style.height = '100%'
         labelContainer.style.pointerEvents = 'none'
         document.body.appendChild(labelContainer)
-        const labelRenderer = new CSS2DRenderer({ element: labelContainer })
+        labelRenderer = new CSS2DRenderer({ element: labelContainer })
         labelRenderer.setSize(canvasRef.value.clientWidth, canvasRef.value.clientHeight)
 
         // настройка управления и начальной точки осмотра
