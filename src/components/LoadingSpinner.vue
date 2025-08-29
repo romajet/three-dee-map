@@ -3,13 +3,15 @@
         <div class="loading-spinner">
             <div class="spinner"></div>
             <p>Загрузка карты...</p>
+            <p>{{ message }}</p>
         </div>
     </div>
 </template>
 
 <script setup>
 defineProps({
-    isLoading: Boolean
+    isLoading: Boolean,
+    message: String,
 })
 </script>
 

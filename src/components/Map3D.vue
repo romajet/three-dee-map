@@ -11,6 +11,7 @@ import polylabel from 'polylabel'
 const canvasRef = ref(null)
 const currentFloor = ref(null)
 const isLoading = ref(true)
+const message = ref(null)
 
 let scene, camera, renderer, labelRenderer, controls
 let objects = []
@@ -43,7 +44,6 @@ function returnToOverview() {
         label.visible = true
     })
 
-    // camera.position.set(100, 100, 100)
     camera.position.set(500, 250, 500)
     controls.target.set(250, 0, 250)
     controls.update()
@@ -119,7 +119,6 @@ function createExtrudedPolygon(coords, depth, color, offset = [0, 0, 0, 1], zShi
 
     const extrudeSettings = { depth, bevelEnabled: false }
     const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings)
-    // geometry.translate(0, 0, zShift)
     geometry.rotateX(Math.PI / 2)
     geometry.translate(0, zShift, 0)
 
@@ -197,11 +196,8 @@ function createFloorFromPolygon(coords, thickness, color, offset = [0, 0, 0, 1],
 
     const extrudeSettings = { depth: thickness, bevelEnabled: false }
     const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings)
-    // geometry.translate(0, zShift, 0)
-    // geometry.rotateX(Math.PI / 2)
 
     geometry.rotateX(Math.PI / 2)
-    // geometry.translate(dx, zShift + thickness / 2, dy)
     geometry.translate(0, zShift + thickness / 2, 0)
 
     const material = new THREE.MeshPhongMaterial({ color })
@@ -216,7 +212,6 @@ function createFloorFromPolygon(coords, thickness, color, offset = [0, 0, 0, 1],
  * @param points Координаты
  */
 function calculatePolygonCenter(points) {
-    // console.log(points)
     const centerPoint = polylabel([points], 1.0)
     return { x: centerPoint[0], y: centerPoint[1] }
 }
@@ -285,11 +280,6 @@ function createRoomFromWalls(roomData, wallHeight, wallThickness, floorThickness
 
     const walls = createWallsFromPolygon(roomData.points, wallHeight, wallThickness, wallColor, offset, zShift)
     roomGroup.add(walls)
-
-    // if (roomData.number) {
-    //     const roomLabel = createRoomLabel(roomData.number, roomData.points, offset, zShift + wallHeight + 1)
-    //     roomGroup.add(roomLabel)
-    // }
 
     roomGroup.userData = roomData
     return roomGroup
@@ -437,6 +427,7 @@ onMounted(async () => {
         isLoading.value = true
 
         // создание сцены
+        message.value = "Создание сцены..."
         scene = new THREE.Scene()
         scene.background = new THREE.Color(0xf0f0f0)
 
@@ -444,14 +435,17 @@ onMounted(async () => {
         scene.add(roomLabelsGroup)
 
         // настройка камеры
+        message.value = "Настройка камеры..."
         camera = new THREE.PerspectiveCamera(60, canvasRef.value.clientWidth / canvasRef.value.clientHeight, 0.1, 1000)
         camera.position.set(500, 250, 500)
 
         // настройка средств рендера
         // основное средство
+        message.value = "Настройка средств рендера (основное)..."
         renderer = new THREE.WebGLRenderer({ antialias: true, canvas: canvasRef.value })
         renderer.setSize(canvasRef.value.clientWidth, canvasRef.value.clientHeight)
         // средство для текста
+        message.value = "Настройка средств рендера (для текста)..."
         const labelContainer = document.createElement('div')
         labelContainer.className = 'label-container'
         labelContainer.style.position = 'absolute'
@@ -465,10 +459,12 @@ onMounted(async () => {
         labelRenderer.setSize(canvasRef.value.clientWidth, canvasRef.value.clientHeight)
 
         // настройка управления и начальной точки осмотра
+        message.value = "Настройка управления и начальной точки осмотра..."
         controls = new OrbitControls(camera, renderer.domElement)
         controls.target.set(250, 0, 250)
 
         // настройка освещения
+        message.value = "Настройка освещения..."
         const light = new THREE.DirectionalLight(0xffffff, 1)
         light.position.set(50, 100, 50)
         scene.add(light)
@@ -480,15 +476,13 @@ onMounted(async () => {
             const offset = consts.buildingOffsets[b.buildingId] || null
             if (offset !== null) {
                 const floors = await extractFloors(b.buildingId)
+                message.value = `Отрисовка корпуса: ${b.name}...`
 
-                // console.log(b.name)
                 const firstData = (await axios.get(`/buildingcoordinates/buildingId/${b.buildingId}/floor/2`)).data
                 const firstFloorPoints = firstData
                     ? JSON.parse(firstData).points.map(point => [point.x, point.y])
                     : null
-                // console.log(floors.length + 1)
                 const buildingLabel = createBuildingLabel(b.name, firstFloorPoints, offset, floors.length * 8 + 1)
-                // console.log(buildingLabel)
                 if (buildingLabel) {
                     scene.add(buildingLabel)
                     buildingLabels.push(buildingLabel)
@@ -561,7 +555,6 @@ onMounted(async () => {
 
                 obj.visible = false
 
-                // console.log(obj.userData.offset)
                 currentFloorGroup = await createDetailedFloor(buildingId, floor, obj.userData.offset)
                 scene.add(currentFloorGroup)
 
@@ -572,6 +565,7 @@ onMounted(async () => {
         }
 
         // вспомогательные элементы (сетка, оси, подписи осей)
+        message.value = "Отрисовка вспомогательных элементов..."
         scene.add(new THREE.GridHelper(1000, 40))
         scene.add(new THREE.AxesHelper(100))
         const axisLabels = createAxisLabels()
@@ -583,14 +577,12 @@ onMounted(async () => {
             controls.update()
             renderer.render(scene, camera)
             labelRenderer.render(scene, camera)
-
-            // console.log('camera position:', camera.position)
-            // console.log('camera rotation:', camera.rotation)
         }
         animate()
     } catch (error) {
         console.error('ошибка загрузки карты:', error)
     } finally {
+        message.value = "Готово!"
         isLoading.value = false
     }
 })
@@ -654,7 +646,6 @@ const fetchRooms = async (buildingId) => {
  * @param buildingId ID корпуса
  */
 const extractFloors = async (buildingId) => {
-    // const funRooms = fetchRooms(buildingId)
     const { data } = await axios.get(`rooms/buildingId/${buildingId}`)
     return [...new Set(data.map(room => room.Floor))]
         .filter(floor => floor != null)
@@ -666,7 +657,7 @@ const extractFloors = async (buildingId) => {
     <div class="scene-container">
         <canvas ref="canvasRef" class="w-full h-screen"></canvas>
         <button v-if="currentFloor" @click="returnToOverview" class="return-button">Назад к общему виду</button>
-        <LoadingSpinner :is-loading="isLoading" />
+        <LoadingSpinner :is-loading="isLoading" :message="message" />
     </div>
 </template>
 
