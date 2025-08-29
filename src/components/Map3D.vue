@@ -1,11 +1,12 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import * as consts from '../plugins/constants.js'
 import axios from '../plugins/axios.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/Addons.js'
 import LoadingSpinner from './LoadingSpinner.vue'
+import polylabel from 'polylabel'
 
 const canvasRef = ref(null)
 const currentFloor = ref(null)
@@ -13,22 +14,33 @@ const isLoading = ref(true)
 
 let scene, camera, renderer, labelRenderer, controls
 let objects = []
+let buildingLabels = []
 
 let currentFloorGroup = null
+let roomLabelsGroup
 
 let isDragging = false
 let mouseStartX = 0
 let mouseStartY = 0
 const dragThreshold = 5
 
+/**
+ * Возврат к общему виду после просмотра детального этажа
+ */
 function returnToOverview() {
     if (currentFloorGroup) {
         scene.remove(currentFloorGroup)
         currentFloorGroup = null
     }
 
+    clearRoomLabels()
+
     objects.forEach(obj => {
         obj.visible = true
+    })
+
+    buildingLabels.forEach(label => {
+        label.visible = true
     })
 
     // camera.position.set(100, 100, 100)
@@ -200,6 +212,61 @@ function createFloorFromPolygon(coords, thickness, color, offset = [0, 0, 0, 1],
 }
 
 /**
+ * Получение полюса полигона (визуальный центр)
+ * @param points Координаты
+ */
+function calculatePolygonCenter(points) {
+    // console.log(points)
+    const centerPoint = polylabel([points], 1.0)
+    return { x: centerPoint[0], y: centerPoint[1] }
+}
+
+/**
+ * Получение центра тяжести полигона (реальный центр)
+ * @param points Координаты
+ */
+function calculateBuildingCenter(points) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (const point of points) {
+        minX = Math.min(minX, point[0])
+        maxX = Math.max(maxX, point[0])
+        minY = Math.min(minY, point[1])
+        maxY = Math.max(maxY, point[1])
+    }
+    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+}
+
+/**
+ * Получение элемента подписи номера для аудитории
+ * @param roomNumber Номер аудитории
+ * @param points Координаты
+ * @param offset Смещение
+ * @param zShift Смещение по высоте
+ */
+function createRoomLabel(roomNumber, points, offset, zShift) {
+    const [dx, dy, rotation, selfScale] = offset
+
+    const center = calculatePolygonCenter(points)
+    const centerX = center.x * consts.scale * selfScale + dx
+    const centerZ = center.y * consts.scale * selfScale + dy
+
+    const div = document.createElement('div')
+    div.className = 'room-label'
+    div.textContent = roomNumber
+    div.style.color = '#000000'
+    div.style.fontSize = '12px'
+    div.style.fontWeight = 'bold'
+    div.style.backgroundColor = 'rgba(255, 255, 255, 0.7)'
+    div.style.padding = '2px 5px'
+    div.style.borderRadius = '3px'
+
+    const label = new CSS2DObject(div)
+    label.position.set(centerX, zShift, centerZ)
+
+    return label
+}
+
+/**
  * Функция отрисовки аудитории
  * @param roomData Информация с координатами
  * @param wallHeight Высота стен
@@ -218,6 +285,11 @@ function createRoomFromWalls(roomData, wallHeight, wallThickness, floorThickness
 
     const walls = createWallsFromPolygon(roomData.points, wallHeight, wallThickness, wallColor, offset, zShift)
     roomGroup.add(walls)
+
+    // if (roomData.number) {
+    //     const roomLabel = createRoomLabel(roomData.number, roomData.points, offset, zShift + wallHeight + 1)
+    //     roomGroup.add(roomLabel)
+    // }
 
     roomGroup.userData = roomData
     return roomGroup
@@ -256,6 +328,8 @@ async function createDetailedFloor(buildingId, floor, offset) {
         floorGroup.add(walls)
     }
 
+    clearRoomLabels()
+
     const rooms = await fetchRooms(buildingId)
     const floorRooms = rooms.filter(room => room.floor === floor)
 
@@ -265,14 +339,18 @@ async function createDetailedFloor(buildingId, floor, offset) {
                 room,
                 8,
                 consts.room_walls,
-                // 0.5,
                 8,
                 0xcccccc,
-                0xf6e3b8,
+                consts.roomColor[room.type],
                 offset,
                 (floor - 1) * 8 + 1.5
             )
             floorGroup.add(roomMesh)
+
+            if (room.number) {
+                const roomLabel = createRoomLabel(room.number, room.points, offset, floor * 8 + 2)
+                roomLabelsGroup.add(roomLabel)
+            }
         }
     }
 
@@ -280,6 +358,21 @@ async function createDetailedFloor(buildingId, floor, offset) {
 
     floorGroup.userData = { buildingId, floor, type: 'detailedFloor' }
     return floorGroup
+}
+
+/**
+ * Очистка подписей номеров аудиторий
+ */
+function clearRoomLabels() {
+    while(roomLabelsGroup.children.length > 0) {
+        const label = roomLabelsGroup.children[0]
+
+        if (label.element && label.element.parentNode) {
+            label.element.parentNode.removeChild(label.element)
+        }
+
+        roomLabelsGroup.remove(label)
+    }
 }
 
 /**
@@ -303,6 +396,42 @@ function centerCameraOnObject(object) {
     controls.update()
 }
 
+/**
+ * Получение элемента подписи названия корпуса
+ * @param buildingName Название корпуса
+ * @param points Координаты
+ * @param offset Смещение
+ * @param zShift Смещение по высоте
+ */
+function createBuildingLabel(buildingName, points, offset, zShift) {
+    const [dx, dy, rotation, selfScale] = offset
+
+    let labelX = dx
+    let labelZ = dy
+
+    if (points && points.length > 0) {
+        const center = calculateBuildingCenter(points)
+        labelX = center.x * consts.scale * selfScale + dx
+        labelZ = center.y * consts.scale * selfScale + dy
+    }
+
+    const div = document.createElement('div')
+    div.className = 'building-label'
+    div.textContent = buildingName
+    div.style.color = '#000000'
+    div.style.fontSize = '16px'
+    div.style.fontWeight = 'bold'
+    div.style.backgroundColor = 'rgba(255, 255, 255, 0.8)'
+    div.style.padding = '5px 10px'
+    div.style.borderRadius = '5px'
+    div.style.textShadow = '1px 1px 2px white'
+
+    const label = new CSS2DObject(div)
+    label.position.set(labelX, zShift, labelZ)
+
+    return label
+}
+
 onMounted(async () => {
     try {
         isLoading.value = true
@@ -310,6 +439,9 @@ onMounted(async () => {
         // создание сцены
         scene = new THREE.Scene()
         scene.background = new THREE.Color(0xf0f0f0)
+
+        roomLabelsGroup = new THREE.Group()
+        scene.add(roomLabelsGroup)
 
         // настройка камеры
         camera = new THREE.PerspectiveCamera(60, canvasRef.value.clientWidth / canvasRef.value.clientHeight, 0.1, 1000)
@@ -348,6 +480,20 @@ onMounted(async () => {
             const offset = consts.buildingOffsets[b.buildingId] || null
             if (offset !== null) {
                 const floors = await extractFloors(b.buildingId)
+
+                // console.log(b.name)
+                const firstData = (await axios.get(`/buildingcoordinates/buildingId/${b.buildingId}/floor/2`)).data
+                const firstFloorPoints = firstData
+                    ? JSON.parse(firstData).points.map(point => [point.x, point.y])
+                    : null
+                // console.log(floors.length + 1)
+                const buildingLabel = createBuildingLabel(b.name, firstFloorPoints, offset, floors.length * 8 + 1)
+                // console.log(buildingLabel)
+                if (buildingLabel) {
+                    scene.add(buildingLabel)
+                    buildingLabels.push(buildingLabel)
+                }
+
                 for (const floor of floors) {
                     const data = (await axios.get(`/buildingcoordinates/buildingId/${b.buildingId}/floor/${floor}`)).data
                     const floorData = data
@@ -407,11 +553,15 @@ onMounted(async () => {
                     }
                 })
 
+                buildingLabels.forEach(label => {
+                    label.visible = false
+                })
+
                 if (currentFloorGroup) scene.remove(currentFloorGroup)
 
                 obj.visible = false
 
-                console.log(obj.userData.offset)
+                // console.log(obj.userData.offset)
                 currentFloorGroup = await createDetailedFloor(buildingId, floor, obj.userData.offset)
                 scene.add(currentFloorGroup)
 
@@ -420,43 +570,6 @@ onMounted(async () => {
                 currentFloor.value = { building: obj.userData.building, floor }
             }
         }
-
-        // renderer.domElement.addEventListener('click', async (event) => {
-        //     const rect = renderer.domElement.getBoundingClientRect()
-        //     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-        //     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-
-        //     raycaster.setFromCamera(mouse, camera)
-        //     const intersects = raycaster.intersectObjects(objects)
-        //     if (intersects.length > 0) {
-        //         // console.log(currentFloor.value)
-        //         if (currentFloor.value !== null) return
-
-        //         const obj = intersects[0].object
-        //         const buildingId = obj.userData.buildingId
-        //         // console.log(obj.userData)
-        //         const floor = obj.userData.floor
-
-        //         objects.forEach(o => {
-        //             if (o.userData.buildingId === buildingId && o.userData.floor > floor) {
-        //                 o.visible = false
-        //             }
-        //         })
-
-        //         if (currentFloorGroup) scene.remove(currentFloorGroup)
-
-        //         obj.visible = false
-
-        //         console.log(obj.userData.offset)
-        //         currentFloorGroup = await createDetailedFloor(buildingId, floor, obj.userData.offset)
-        //         scene.add(currentFloorGroup)
-
-        //         centerCameraOnObject(currentFloorGroup)
-
-        //         currentFloor.value = { building: obj.userData.building, floor }
-        //         // console.log(currentFloor.value)
-        //     }
-        // })
 
         // вспомогательные элементы (сетка, оси, подписи осей)
         scene.add(new THREE.GridHelper(1000, 40))
@@ -479,6 +592,24 @@ onMounted(async () => {
         console.error('ошибка загрузки карты:', error)
     } finally {
         isLoading.value = false
+    }
+})
+
+onUnmounted(() => {
+    clearRoomLabels()
+
+    if (renderer) {
+        renderer.dispose()
+    }
+
+    if (controls) {
+        controls.dispose()
+    }
+
+    if (scene) {
+        while(scene.children.length > 0) {
+            scene.remove(scene.children[0])
+        }
     }
 })
 
